@@ -1,9 +1,9 @@
 
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 from scipy.stats import linregress
 
 st.set_page_config(
@@ -76,10 +76,8 @@ else:
 
     if uploaded_file is None:
         st.info("Upload a CSV file to begin analysis.")
-
         st.write("Required columns:")
         st.code("Year, Region, Variable, Value")
-
         st.stop()
 
     try:
@@ -104,6 +102,9 @@ else:
 
     df = df.dropna(subset=required_columns)
 
+    df["Region"] = df["Region"].astype(str)
+    df["Variable"] = df["Variable"].astype(str)
+
     if df.empty:
         st.error("No valid data found in the CSV.")
         st.stop()
@@ -125,32 +126,37 @@ selected_variable = st.sidebar.selectbox(
     sorted(df["Variable"].astype(str).unique())
 )
 
-selected_region = st.sidebar.selectbox(
-    "Geographical Region",
-    sorted(df["Region"].astype(str).unique())
+variable_data = df[
+    df["Variable"].astype(str) == selected_variable
+].copy()
+
+available_regions = sorted(
+    variable_data["Region"].astype(str).unique()
 )
 
-data = df[
-    (df["Variable"].astype(str) == selected_variable)
-    & (df["Region"].astype(str) == selected_region)
+if not available_regions:
+    st.error("No regions are available for this variable.")
+    st.stop()
+
+selected_region = st.sidebar.selectbox(
+    "Geographical Region (individual analysis)",
+    available_regions
+)
+
+data = variable_data[
+    variable_data["Region"].astype(str) == selected_region
 ].copy()
 
 data = data.sort_values("Year")
 
-if len(data) < 3:
+if len(data) < 3 or data["Year"].nunique() < 3:
     st.warning(
-        "At least 3 valid measurements are required "
-        "for trend analysis."
+        "At least 3 valid measurements from 3 different years "
+        "are required for individual trend analysis."
     )
     st.stop()
 
-if data["Year"].nunique() < 3:
-    st.warning(
-        "At least 3 different years are required."
-    )
-    st.stop()
-
-# TREND ANALYSIS
+# INDIVIDUAL TREND ANALYSIS
 result = linregress(data["Year"], data["Value"])
 
 slope = result.slope
@@ -167,7 +173,7 @@ else:
 significant = p_value < 0.05
 
 # RESULTS
-st.header("🔍 Environmental Analysis")
+st.header("🔍 Individual Environmental Analysis")
 
 col1, col2, col3 = st.columns(3)
 
@@ -188,7 +194,7 @@ col3.metric(
 
 st.metric("R-squared", f"{r_squared:.4f}")
 
-# GRAPH
+# INDIVIDUAL GRAPH
 st.header("📈 Historical Change Visualization")
 
 fig = px.scatter(
@@ -201,24 +207,178 @@ fig = px.scatter(
 
 st.plotly_chart(fig, use_container_width=True)
 
+# MULTI-REGION COMPARISON
+st.header("🌍 Multi-Region Comparison")
+
+st.write(
+    "Compare the same environmental variable across multiple "
+    "geographical regions."
+)
+
+comparison_regions = st.multiselect(
+    "Select regions to compare",
+    options=available_regions,
+    default=available_regions[:min(3, len(available_regions))]
+)
+
+if len(comparison_regions) < 2:
+
+    st.info("Select at least two regions to display a comparison.")
+
+else:
+
+    comparison_data = variable_data[
+        variable_data["Region"].isin(comparison_regions)
+    ].copy()
+
+    comparison_data = comparison_data.sort_values("Year")
+
+    comparison_fig = go.Figure()
+
+    comparison_results = []
+
+    for region in comparison_regions:
+
+        region_data = comparison_data[
+            comparison_data["Region"] == region
+        ].sort_values("Year")
+
+        comparison_fig.add_trace(
+            go.Scatter(
+                x=region_data["Year"],
+                y=region_data["Value"],
+                mode="markers",
+                name=f"{region} observations"
+            )
+        )
+
+        if len(region_data) >= 3 and region_data["Year"].nunique() >= 3:
+
+            region_result = linregress(
+                region_data["Year"],
+                region_data["Value"]
+            )
+
+            line_x = np.linspace(
+                region_data["Year"].min(),
+                region_data["Year"].max(),
+                100
+            )
+
+            line_y = (
+                region_result.intercept
+                + region_result.slope * line_x
+            )
+
+            comparison_fig.add_trace(
+                go.Scatter(
+                    x=line_x,
+                    y=line_y,
+                    mode="lines",
+                    name=f"{region} trend"
+                )
+            )
+
+            if region_result.slope > 0:
+                region_trend = "Increasing"
+            elif region_result.slope < 0:
+                region_trend = "Decreasing"
+            else:
+                region_trend = "Stable"
+
+            comparison_results.append({
+                "Region": region,
+                "Rate of Change (per year)": round(
+                    region_result.slope, 4
+                ),
+                "Trend Direction": region_trend,
+                "R-squared": round(
+                    region_result.rvalue ** 2, 4
+                ),
+                "P-value": round(
+                    region_result.pvalue, 4
+                ),
+                "Statistically Significant": (
+                    "Yes"
+                    if region_result.pvalue < 0.05
+                    else "No"
+                )
+            })
+
+        else:
+
+            comparison_results.append({
+                "Region": region,
+                "Rate of Change (per year)": "Insufficient data",
+                "Trend Direction": "Insufficient data",
+                "R-squared": "—",
+                "P-value": "—",
+                "Statistically Significant": "—"
+            })
+
+    comparison_fig.update_layout(
+        title=f"{selected_variable}: Regional Comparison",
+        xaxis_title="Year",
+        yaxis_title=selected_variable,
+        legend_title="Region and trend",
+        hovermode="x unified"
+    )
+
+    st.plotly_chart(
+        comparison_fig,
+        use_container_width=True
+    )
+
+    st.subheader("📋 Regional Trend Comparison")
+
+    comparison_table = pd.DataFrame(comparison_results)
+
+    st.dataframe(
+        comparison_table,
+        use_container_width=True
+    )
+
+    st.download_button(
+        "Download Regional Comparison",
+        comparison_table.to_csv(index=False),
+        file_name="earthtrend_region_comparison.csv",
+        mime="text/csv"
+    )
+
 # STATISTICAL SIGNIFICANCE
 st.header("📐 Statistical Significance")
 
-st.write(
-    "Significance level: 0.05"
-)
+st.write("Significance level: 0.05")
 
 if significant:
+
     st.success(
-        "The observed linear trend is statistically significant."
+        "The observed individual linear trend is statistically significant."
     )
+
 else:
+
     st.warning(
-        "The observed linear trend is not statistically significant."
+        "The observed individual linear trend is not statistically significant."
     )
 
 st.caption(
     "Statistical significance does not prove causation. "
+    "Results depend on data quality and model assumptions."
+)
+
+# DOWNLOAD
+st.header("📥 Download Analysis")
+
+st.download_button(
+    "Download Selected Data",
+    data.to_csv(index=False),
+    file_name="earthtrend_analysis.csv",
+    mime="text/csv"
+)
+
+st.success("EarthTrend AI analysis completed!")
+
     "Results depend on data quality and model assumptions."
 )
 
