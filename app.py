@@ -1,4 +1,5 @@
 
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -15,156 +16,221 @@ st.title("🌍 EarthTrend AI")
 st.subheader("Earth Environmental Change Detection & Analysis")
 
 st.write(
-    "Explore environmental changes across regions "
-    "and analyze their trends over time."
+    "Analyze environmental changes across geographical "
+    "regions using historical scientific data."
 )
 
-# Generate clearly labelled demonstration data
-rng = np.random.default_rng(42)
+st.sidebar.header("Data Selection")
 
-years = np.arange(2000, 2026)
+data_source = st.sidebar.radio(
+    "Choose Data Source",
+    ["Demonstration Data", "Upload CSV Data"]
+)
 
-regions = ["Region A", "Region B", "Region C"]
+# DEMONSTRATION DATA
+if data_source == "Demonstration Data":
 
-variables = {
-    "Temperature": {
-        "unit": "°C",
-        "base": 20,
-        "slopes": [0.08, -0.04, 0.02]
-    },
-    "Rainfall": {
-        "unit": "mm",
-        "base": 800,
-        "slopes": [5, -3, 1]
-    },
-    "Sea Level": {
-        "unit": "mm",
-        "base": 100,
-        "slopes": [3.5, 1.5, -0.5]
+    rng = np.random.default_rng(42)
+    years = np.arange(2000, 2026)
+
+    variables = {
+        "Temperature": (20, [0.08, -0.04, 0.02]),
+        "Rainfall": (800, [5, -3, 1]),
+        "Sea Level": (100, [3.5, 1.5, -0.5])
     }
-}
 
-records = []
+    records = []
 
-for variable, info in variables.items():
-    for i, region in enumerate(regions):
-        for year in years:
-            value = (
-                info["base"]
-                + info["slopes"][i] * (year - 2000)
-                + rng.normal(0, 2)
-            )
+    for variable, (base, slopes) in variables.items():
+        for i, region in enumerate(
+            ["Region A", "Region B", "Region C"]
+        ):
+            for year in years:
+                value = (
+                    base
+                    + slopes[i] * (year - 2000)
+                    + rng.normal(0, 2)
+                )
 
-            records.append({
-                "Year": year,
-                "Region": region,
-                "Variable": variable,
-                "Value": value
-            })
+                records.append({
+                    "Year": year,
+                    "Region": region,
+                    "Variable": variable,
+                    "Value": value
+                })
 
-df = pd.DataFrame(records)
+    df = pd.DataFrame(records)
 
-st.info(
-    "Demo mode: These are simulated data, "
-    "not actual satellite observations."
+    st.info(
+        "Demonstration mode: Data is simulated, "
+        "not actual satellite observations."
+    )
+
+# UPLOAD REAL DATA
+else:
+
+    uploaded_file = st.file_uploader(
+        "Upload environmental CSV file",
+        type=["csv"]
+    )
+
+    if uploaded_file is None:
+        st.info("Upload a CSV file to begin analysis.")
+
+        st.write("Required columns:")
+        st.code("Year, Region, Variable, Value")
+
+        st.stop()
+
+    try:
+        df = pd.read_csv(uploaded_file)
+    except Exception as error:
+        st.error(f"Could not read CSV: {error}")
+        st.stop()
+
+    required_columns = [
+        "Year", "Region", "Variable", "Value"
+    ]
+
+    if not all(col in df.columns for col in required_columns):
+        st.error(
+            "Your CSV must contain these columns: "
+            "Year, Region, Variable, Value"
+        )
+        st.stop()
+
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce")
+    df["Value"] = pd.to_numeric(df["Value"], errors="coerce")
+
+    df = df.dropna(subset=required_columns)
+
+    if df.empty:
+        st.error("No valid data found in the CSV.")
+        st.stop()
+
+    st.success("Environmental dataset uploaded successfully!")
+
+# DATA PREVIEW
+st.header("📊 Environmental Data")
+
+st.dataframe(df.head(20), use_container_width=True)
+
+st.caption(f"Total records: {len(df)}")
+
+# FILTERS
+st.sidebar.header("Analysis Filters")
+
+selected_variable = st.sidebar.selectbox(
+    "Environmental Variable",
+    sorted(df["Variable"].astype(str).unique())
 )
 
-# User selections
-col1, col2 = st.columns(2)
+selected_region = st.sidebar.selectbox(
+    "Geographical Region",
+    sorted(df["Region"].astype(str).unique())
+)
 
-with col1:
-    selected_variable = st.selectbox(
-        "Select Environmental Variable",
-        list(variables.keys())
-    )
-
-with col2:
-    selected_region = st.selectbox(
-        "Select Geographical Region",
-        regions
-    )
-
-# Filter data
 data = df[
-    (df["Variable"] == selected_variable) &
-    (df["Region"] == selected_region)
+    (df["Variable"].astype(str) == selected_variable)
+    & (df["Region"].astype(str) == selected_region)
 ].copy()
 
-# Statistical analysis
+data = data.sort_values("Year")
+
+if len(data) < 3:
+    st.warning(
+        "At least 3 valid measurements are required "
+        "for trend analysis."
+    )
+    st.stop()
+
+if data["Year"].nunique() < 3:
+    st.warning(
+        "At least 3 different years are required."
+    )
+    st.stop()
+
+# TREND ANALYSIS
 result = linregress(data["Year"], data["Value"])
 
 slope = result.slope
 p_value = result.pvalue
+r_squared = result.rvalue ** 2
 
-trend = (
-    "Increasing" if slope > 0
-    else "Decreasing" if slope < 0
-    else "Stable"
-)
+if slope > 0:
+    trend = "Increasing"
+elif slope < 0:
+    trend = "Decreasing"
+else:
+    trend = "Stable"
 
 significant = p_value < 0.05
 
-# Results
-st.header("Environmental Analysis")
+# RESULTS
+st.header("🔍 Environmental Analysis")
 
-c1, c2, c3 = st.columns(3)
+col1, col2, col3 = st.columns(3)
 
-c1.metric(
+col1.metric(
     "Rate of Change",
-    f"{slope:.3f} {variables[selected_variable]['unit']}/year"
+    f"{slope:.4f} per year"
 )
 
-c2.metric("Trend Direction", trend)
+col2.metric(
+    "Trend Direction",
+    trend
+)
 
-c3.metric("P-value", f"{p_value:.4f}")
+col3.metric(
+    "P-value",
+    f"{p_value:.4f}"
+)
 
-# Graph
-st.header("Historical Change Visualization")
+st.metric("R-squared", f"{r_squared:.4f}")
 
-fig = px.line(
+# GRAPH
+st.header("📈 Historical Change Visualization")
+
+fig = px.scatter(
     data,
     x="Year",
     y="Value",
-    markers=True,
-    title=f"{selected_variable} - {selected_region}"
-)
-
-fig.update_layout(
-    xaxis_title="Year",
-    yaxis_title=variables[selected_variable]["unit"]
+    title=f"{selected_variable} - {selected_region}",
+    trendline="ols"
 )
 
 st.plotly_chart(fig, use_container_width=True)
 
-# Statistical significance
-st.header("Statistical Significance")
+# STATISTICAL SIGNIFICANCE
+st.header("📐 Statistical Significance")
+
+st.write(
+    "Significance level: 0.05"
+)
 
 if significant:
     st.success(
-        "The observed linear trend is statistically significant "
-        "at the 0.05 level."
+        "The observed linear trend is statistically significant."
     )
 else:
     st.warning(
-        "The observed linear trend is not statistically significant "
-        "at the 0.05 level."
+        "The observed linear trend is not statistically significant."
     )
 
-st.write(f"R-squared: {result.rvalue ** 2:.4f}")
-
 st.caption(
-    "Results are based on simulated demonstration data. "
-    "Statistical significance does not establish causation."
+    "Statistical significance does not prove causation. "
+    "Results depend on data quality and model assumptions."
 )
 
-# Download results
-st.header("Download Analysis")
-
-csv = data.to_csv(index=False)
+# DOWNLOAD
+st.header("📥 Download Analysis")
 
 st.download_button(
-    "Download Selected Data (CSV)",
-    csv,
+    "Download Selected Data",
+    data.to_csv(index=False),
     file_name="earthtrend_analysis.csv",
     mime="text/csv"
 )
+
+st.success("EarthTrend AI analysis completed!")
+
